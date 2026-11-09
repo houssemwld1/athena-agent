@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Explorer</title>
+<style>
+  :root {
+    --bg: #ffffff; --card: #f5f6fa; --text: #14161c; --muted: #6b7280;
+    --line: #e3e6ee; --accent: #4f46e5; --accent-soft: #e0e7ff; --hot: #dc2626;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    --bg: #16171d; --card: #1f2129; --text: #eef0f5; --muted: #9aa1b2;
+    --line: #2e313c; --accent: #818cf8; --accent-soft: #2b2d4a; --hot: #f87171;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-size: 14px; }
+  main { padding: 14px; max-width: 760px; margin: 0 auto; }
+  header h2 { margin: 0; font-size: 17px; }
+  header p { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; }
+  .stats { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+  .stat { background: var(--card); border-radius: 10px; padding: 8px 12px; flex: 1; min-width: 90px; }
+  .stat b { display: block; font-size: 18px; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .seg { display: inline-flex; background: var(--card); border-radius: 9px; padding: 3px; }
+  .seg button { border: 0; background: none; color: var(--text); padding: 5px 10px; border-radius: 7px; cursor: pointer; font: inherit; }
+  .seg button.on { background: var(--accent); color: #fff; }
+  label.ctl { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; }
+  select, input[type="search"] { font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; }
+  input[type="range"] { accent-color: var(--accent); }
+  .viz { background: var(--card); border-radius: 12px; overflow: hidden; margin-bottom: 10px; }
+  .viz svg { display: block; width: 100%; height: auto; }
+  .list { display: flex; flex-direction: column; gap: 6px; }
+  .row { background: var(--card); border-radius: 10px; padding: 9px 12px; cursor: pointer; border: 1px solid transparent; }
+  .row.sel { border-color: var(--accent); }
+  .row .top { display: flex; align-items: center; gap: 10px; }
+  .badge { min-width: 42px; text-align: center; font-weight: 700; border-radius: 7px; padding: 3px 6px; background: var(--accent-soft); color: var(--accent); }
+  .badge.hot { background: var(--hot); color: #fff; }
+  .row .lbl { flex: 1; }
+  .row .t { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .details { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 14px; margin-top: 8px; font-size: 12.5px; }
+  .details div span { color: var(--muted); }
+  .details a { color: var(--accent); }
+  .more { margin-top: 8px; width: 100%; border: 1px dashed var(--line); background: none; color: var(--accent); padding: 7px; border-radius: 9px; cursor: pointer; font: inherit; }
+  footer { margin-top: 12px; color: var(--muted); font-size: 11.5px; }
+  footer a { color: inherit; }
+  .empty, .loading { padding: 30px; text-align: center; color: var(--muted); }
+  .dot { cursor: pointer; transition: opacity .15s; }
+</style>
+</head>
+<body>
+<main id="app"><div class="loading">Loading live data...</div></main>
+
+<script type="module">
+// =====================================================================
+// SWAP ZONE: adapt to the subject
+// =====================================================================
+const TOOL_NAME = "search_earthquakes";          // must match TOOL_NAME in server.js
+const RELOAD = {                                  // buttons that re-call the MCP tool (real round trip)
+  arg: "days",
+  options: [ { v: 1, l: "24h" }, { v: 7, l: "7d" }, { v: 30, l: "30d" } ],
+};
+const HOT_THRESHOLD = 6;                          // values at or above this get a red badge
+const PAGE = 8;                                   // rows shown before "Show more"
+// =====================================================================
+
+const app = document.getElementById("app");
+const oa = () => window.openai || {};
+
+let data = null;
+let loading = false;
+let ui = Object.assign(
+  { minVal: null, sort: "recent", q: "", selected: null, shown: PAGE },
+  oa().widgetState || {}
+);
+
+function saveState() {
+  try { oa().setWidgetState?.({ ...ui }); } catch (_) {}
+}
+
+function applyTheme() {
+  const t = oa().theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.documentElement.dataset.theme = t;
+}
+
+function setData(d) {
+  if (!d || !Array.isArray(d.items)) return;
+  data = d;
+  const vals = d.items.map(i => i.value).filter(v => typeof v === "number");
+  if (ui.minVal == null && vals.length) ui.minVal = Math.floor(Math.min(...vals) * 10) / 10;
+  render();
+}
+
+function visibleItems() {
+  let items = data.items.filter(i =>
+    (ui.minVal == null || i.value == null || i.value >= ui.minVal) &&
+    (!ui.q || i.label.toLowerCase().includes(ui.q.toLowerCase()))
+  );
+  const by = {
+    recent: (a, b) => new Date(b.time) - new Date(a.time),
+    value: (a, b) => (b.value ?? -1e9) - (a.value ?? -1e9),
+    name: (a, b) => a.label.localeCompare(b.label),
+  }[ui.sort];
+  return items.sort(by);
+}
+
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtTime = t => { const d = new Date(t); return isNaN(d) ? "" : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); };
+
+function vizSVG(items) {
+  const geo = items.some(i => typeof i.lat === "number" && typeof i.lon === "number");
+  if (geo) {
+    // Equirectangular plot with a graticule. Point size and color scale with value.
+    const W = 720, H = 360;
+    const x = lon => (lon + 180) / 360 * W, y = lat => (90 - lat) / 180 * H;
+    let g = "";
+    for (let lon = -180; lon <= 180; lon += 30) g += `<line x1="${x(lon)}" y1="0" x2="${x(lon)}" y2="${H}" stroke="var(--line)" />`;
+    for (let lat = -90; lat <= 90; lat += 30) g += `<line x1="0" y1="${y(lat)}" x2="${W}" y2="${y(lat)}" stroke="var(--line)" />`;
+    g += `<line x1="0" y1="${y(0)}" x2="${W}" y2="${y(0)}" stroke="var(--muted)" stroke-dasharray="4 4" opacity=".5" />`;
+    const dots = items.map(i => {
+      const r = Math.max(2.5, ((i.value ?? 1) ** 1.6) / 2);
+      const sel = ui.selected === i.id;
+      const op = ui.selected && !sel ? 0.25 : 0.8;
+      const col = (i.value ?? 0) >= HOT_THRESHOLD ? "var(--hot)" : "var(--accent)";
+      return `<circle class="dot" data-id="${esc(i.id)}" cx="${x(i.lon)}" cy="${y(i.lat)}" r="${sel ? r + 3 : r}"
+        fill="${col}" fill-opacity="${op}" stroke="${sel ? "var(--text)" : "none"}" stroke-width="1.5"><title>${esc(i.label)} (${i.value})</title></circle>`;
+    }).join("");
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Map of results">${g}${dots}</svg>`;
+  }
+  // Fallback: horizontal bar chart of the top values.
+  const top = [...items].sort((a, b) => (b.value ?? 0) - (a.value ?? 0)).slice(0, 12);
+  const max = Math.max(1, ...top.map(i => i.value ?? 0));
+  const W = 720, rowH = 26, H = top.length * rowH + 10;
+  const bars = top.map((i, k) => {
+    const w = (i.value ?? 0) / max * (W - 260);
+    const sel = ui.selected === i.id;
+    return `<g class="dot" data-id="${esc(i.id)}" opacity="${ui.selected && !sel ? 0.35 : 1}">
+      <text x="8" y="${k * rowH + 22}" fill="var(--text)" font-size="12">${esc(i.label.slice(0, 30))}</text>
+      <rect x="220" y="${k * rowH + 9}" width="${w}" height="16" rx="4" fill="var(--accent)" />
+      <text x="${226 + w}" y="${k * rowH + 22}" fill="var(--muted)" font-size="12">${esc(i.value)}</text></g>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Bar chart of results">${bars}</svg>`;
+}
+
+function render() {
+  applyTheme();
+  if (!data) { app.innerHTML = `<div class="loading">Loading live data...</div>`; return; }
+
+  const items = visibleItems();
+  const vals = data.items.map(i => i.value).filter(v => typeof v === "number");
+  const lo = vals.length ? Math.floor(Math.min(...vals)) : 0;
+  const hi = vals.length ? Math.ceil(Math.max(...vals)) : 10;
+  const cur = data.query?.[RELOAD.arg];
+
+  app.innerHTML = `
+    <header><h2>${esc(data.title)}</h2><p>${esc(data.subtitle)}${loading ? " &middot; refreshing..." : ""}</p></header>
+    <div class="stats">
+      ${(data.stats || []).map(s => `<div class="stat"><b>${esc(s.value)}</b><span>${esc(s.label)}</span></div>`).join("")}
+      <div class="stat"><b>${items.length}</b><span>Shown after filters</span></div>
+    </div>
+    <div class="controls">
+      <div class="seg" id="reload">${RELOAD.options.map(o =>
+        `<button data-v="${o.v}" class="${o.v === cur ? "on" : ""}">${o.l}</button>`).join("")}</div>
+      <label class="ctl">${esc(data.valueName || "Value")} &ge; <b id="minv">${ui.minVal ?? lo}</b>
+        <input id="min" type="range" min="${lo}" max="${hi}" step="0.1" value="${ui.minVal ?? lo}" /></label>
+      <label class="ctl">Sort <select id="sort">
+        <option value="recent" ${ui.sort === "recent" ? "selected" : ""}>Most recent</option>
+        <option value="value" ${ui.sort === "value" ? "selected" : ""}>Highest ${esc((data.valueName || "value").toLowerCase())}</option>
+        <option value="name" ${ui.sort === "name" ? "selected" : ""}>Name</option></select></label>
+      <input id="q" type="search" placeholder="Filter by name" value="${esc(ui.q)}" />
+    </div>
+    <div class="viz">${items.length ? vizSVG(items) : ""}</div>
+    <div class="list">
+      ${items.length ? items.slice(0, ui.shown).map(i => `
+        <div class="row ${ui.selected === i.id ? "sel" : ""}" data-id="${esc(i.id)}">
+          <div class="top">
+            <span class="badge ${(i.value ?? 0) >= HOT_THRESHOLD ? "hot" : ""}">${esc(i.value ?? "-")}</span>
+            <span class="lbl">${esc(i.label)}</span>
+            <span class="t">${fmtTime(i.time)}</span>
+          </div>
+          ${ui.selected === i.id ? `<div class="details">
+            ${Object.entries(i.details || {}).map(([k, v]) => `<div><span>${esc(k)}:</span> ${esc(v)}</div>`).join("")}
+            ${typeof i.lat === "number" ? `<div><span>Coords:</span> ${i.lat.toFixed(2)}, ${i.lon.toFixed(2)}</div>` : ""}
+            ${i.url ? `<div><a href="${esc(i.url)}" data-ext="1">Open source page</a></div>` : ""}
+          </div>` : ""}
+        </div>`).join("") : `<div class="empty">No results match these filters.</div>`}
+    </div>
+    ${items.length > ui.shown ? `<button class="more" id="more">Show more (${items.length - ui.shown})</button>` : ""}
+    <footer>Live data: <a href="${esc(data.sourceUrl)}" data-ext="1">${esc(data.source)}</a></footer>`;
+  bind();
+}
+
+function bind() {
+  // Real MCP round trip: re-call the tool from inside the widget
+  app.querySelectorAll("#reload button").forEach(b => b.onclick = async () => {
+    const v = Number(b.dataset.v);
+    if (!oa().callTool) return;
+    loading = true; render();
+    try {
+      const resp = await oa().callTool(TOOL_NAME, { ...(data.query || {}), [RELOAD.arg]: v });
+      const sc = resp?.structuredContent ?? resp?.result?.structuredContent;
+      ui.selected = null; ui.shown = PAGE; ui.minVal = null;
+      loading = false;
+      if (sc) setData(sc); else render();
+      saveState();
+    } catch (e) { loading = false; render(); }
+  });
+  const min = app.querySelector("#min");
+  if (min) min.oninput = () => { ui.minVal = Number(min.value); ui.shown = PAGE; app.querySelector("#minv").textContent = min.value; };
+  if (min) min.onchange = () => { render(); saveState(); };
+  const sort = app.querySelector("#sort");
+  if (sort) sort.onchange = () => { ui.sort = sort.value; render(); saveState(); };
+  const q = app.querySelector("#q");
+  if (q) q.onchange = () => { ui.q = q.value; ui.shown = PAGE; render(); saveState(); };
+  const more = app.querySelector("#more");
+  if (more) more.onclick = () => { ui.shown += PAGE; render(); saveState(); };
+  app.querySelectorAll(".row, .dot").forEach(el => el.onclick = (e) => {
+    if (e.target.closest("a")) return;
+    const id = el.dataset.id;
+    ui.selected = ui.selected === id ? null : id;
+    render(); saveState();
+  });
+  app.querySelectorAll("a[data-ext]").forEach(a => a.onclick = (e) => {
+    if (oa().openExternal) { e.preventDefault(); oa().openExternal({ href: a.href }); }
+    else { a.target = "_blank"; }
+  });
+}
+
+// Initial data injected by Athena, plus updates pushed later
+window.addEventListener("openai:set_globals", (e) => {
+  const g = e.detail?.globals || {};
+  if (g.toolOutput) setData(g.toolOutput);
+  else if (g.theme) render();
+}, { passive: true });
+
+if (oa().toolOutput) setData(oa().toolOutput);
+else render();
+</script>
+</body>
+</html>
