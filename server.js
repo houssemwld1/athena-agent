@@ -139,7 +139,7 @@ async function fetchData(args) {
     source: "Open-Meteo Air Quality API (Copernicus CAMS)",
     sourceUrl: "https://open-meteo.com/en/docs/air-quality-api",
     query: { pollutant, days, cities: citiesArg },
-    valueName: `${p.name} AQI`,
+    valueName: pollutant === "aqi" ? "AQI" : `${p.name} AQI`,
     items,
     stats: [
       { label: "Worst", value: worst ? `${worst.label.split(",")[0]} ${worst.value}` : "n/a" },
