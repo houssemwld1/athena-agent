@@ -65,6 +65,10 @@ const RELOAD = {                                  // buttons that re-call the MC
   options: [ { v: "aqi", l: "AQI" }, { v: "pm2_5", l: "PM2.5" }, { v: "pm10", l: "PM10" },
              { v: "nitrogen_dioxide", l: "NO2" }, { v: "ozone", l: "O3" } ],
 };
+const RELOAD2 = {                                 // optional second button group (set to null to hide)
+  arg: "days",
+  options: [ { v: 1, l: "24h" }, { v: 3, l: "3 days" }, { v: 7, l: "7 days" } ],
+};
 const HOT_THRESHOLD = 101;                          // values at or above this get a red badge
 // Optional color scale [minValue, color, label]: official US AQI severity bands. Set to [] to use HOT_THRESHOLD only.
 const SCALE = [[0, "#2e9e44", "Good"], [51, "#c9a400", "Moderate"], [101, "#ff7e00", "Sensitive"],
@@ -198,7 +202,8 @@ function render() {
   const vals = data.items.map(i => i.value).filter(v => typeof v === "number");
   const lo = vals.length ? Math.floor(Math.min(...vals)) : 0;
   const hi = vals.length ? Math.ceil(Math.max(...vals)) : 10;
-  const cur = data.query?.[RELOAD.arg];
+  const seg = (R) => R ? `<div class="seg reload">${R.options.map(o =>
+    `<button data-arg="${R.arg}" data-v="${o.v}" class="${o.v === data.query?.[R.arg] ? "on" : ""}">${o.l}</button>`).join("")}</div>` : "";
 
   app.innerHTML = `
     <header><h2>${esc(data.title)}</h2><p>${esc(data.subtitle)}${loading ? " &middot; refreshing..." : ""}${ui.err ? ` &middot; <b>${esc(ui.err)}</b>` : ""}</p></header>
@@ -207,8 +212,7 @@ function render() {
       <div class="stat"><b>${items.length}</b><span>Shown after filters</span></div>
     </div>
     <div class="controls">
-      <div class="seg" id="reload">${RELOAD.options.map(o =>
-        `<button data-v="${o.v}" class="${o.v === cur ? "on" : ""}">${o.l}</button>`).join("")}</div>
+      ${seg(RELOAD)}${seg(RELOAD2)}
       <label class="ctl">${esc(data.valueName || "Value")} &ge; <b id="minv">${ui.minVal ?? lo}</b>
         <input id="min" type="range" min="${lo}" max="${hi}" step="0.1" value="${ui.minVal ?? lo}" /></label>
       <label class="ctl">Sort <select id="sort">
@@ -242,9 +246,10 @@ function render() {
 
 function bind() {
   // Real MCP round trip: re-call the tool from inside the widget
-  app.querySelectorAll("#reload button").forEach(b => b.onclick = async () => {
+  app.querySelectorAll(".reload button").forEach(b => b.onclick = async () => {
+    const arg = b.dataset.arg;
     const v = isNaN(Number(b.dataset.v)) ? b.dataset.v : Number(b.dataset.v);
-    const args = { ...(data.query || {}), [RELOAD.arg]: v };
+    const args = { ...(data.query || {}), [arg]: v };
     loading = true; ui.err = ""; ui.pendingV = v; saveState(); render();
     try {
       if (!oa().callTool) throw new Error("callTool unavailable");
@@ -257,7 +262,7 @@ function bind() {
       if (typeof sc === "string") { try { sc = JSON.parse(sc); } catch (_) {} }
       if (!sc || !Array.isArray(sc.items)) throw new Error("no data in response [" + shape + "]");
       // Some hosts drop the arguments: detect that the server did not use the new value.
-      if (sc.query && sc.query[RELOAD.arg] !== undefined && sc.query[RELOAD.arg] !== v) throw new Error("host ignored arguments");
+      if (sc.query && sc.query[arg] !== undefined && sc.query[arg] !== v) throw new Error("host ignored arguments");
       ui.selected = null; ui.shown = PAGE; ui.minVal = null;
       loading = false;
       ui.snap = sc; // persisted: survives the host re-rendering the iframe
@@ -267,7 +272,7 @@ function bind() {
       loading = false; ui.pendingV = null;
       // Fallback: ask the agent to re-run the tool (still a real MCP round trip).
       if (oa().sendFollowUpMessage) {
-        oa().sendFollowUpMessage({ prompt: `Reload the data with ${RELOAD.arg} = ${v}` });
+        oa().sendFollowUpMessage({ prompt: `Reload the data with ${arg} = ${v}` });
         ui.err = "Asked the agent to reload";
       } else ui.err = "Reload failed: " + (e?.message || e);
       saveState(); render();

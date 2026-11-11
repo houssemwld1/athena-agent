@@ -247,7 +247,7 @@ const httpServer = createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/data") {
     try {
       const args = Object.fromEntries(
-        [...url.searchParams].map(([k, v]) => [k, isNaN(Number(v)) ? v : Number(v)])
+        [...url.searchParams].map(([k, v]) => [k, v === "" || isNaN(Number(v)) ? v : Number(v)])
       );
       const data = await fetchData(args);
       res.writeHead(200, { "content-type": "application/json", "Access-Control-Allow-Origin": "*" });
