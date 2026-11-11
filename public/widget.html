@@ -78,7 +78,7 @@ if (!window.openai && window.parent !== window) {
   const post = m => window.parent.postMessage({ jsonrpc: "2.0", ...m }, "*");
   const rpc = (method, params) => new Promise((res, rej) => {
     const id = ++seq; pending[id] = { res, rej }; post({ id, method, params });
-    setTimeout(() => { if (pending[id]) { delete pending[id]; rej(new Error("timeout")); } }, 30000);
+    setTimeout(() => { if (pending[id]) { delete pending[id]; rej(new Error("timeout")); } }, 15000);
   });
   const push = sc => {
     if (!sc) return;
@@ -193,7 +193,7 @@ function render() {
   const cur = data.query?.[RELOAD.arg];
 
   app.innerHTML = `
-    <header><h2>${esc(data.title)}</h2><p>${esc(data.subtitle)}${loading ? " &middot; refreshing..." : ""}</p></header>
+    <header><h2>${esc(data.title)}</h2><p>${esc(data.subtitle)}${loading ? " &middot; refreshing..." : ""}${ui.err ? ` &middot; <b>${esc(ui.err)}</b>` : ""}</p></header>
     <div class="stats">
       ${(data.stats || []).map(s => `<div class="stat"><b>${esc(s.value)}</b><span>${esc(s.label)}</span></div>`).join("")}
       <div class="stat"><b>${items.length}</b><span>Shown after filters</span></div>
@@ -234,16 +234,29 @@ function bind() {
   // Real MCP round trip: re-call the tool from inside the widget
   app.querySelectorAll("#reload button").forEach(b => b.onclick = async () => {
     const v = Number(b.dataset.v);
-    if (!oa().callTool) return;
-    loading = true; render();
+    const args = { ...(data.query || {}), [RELOAD.arg]: v };
+    loading = true; ui.err = ""; render();
     try {
-      const resp = await oa().callTool(TOOL_NAME, { ...(data.query || {}), [RELOAD.arg]: v });
-      const sc = resp?.structuredContent ?? resp?.result?.structuredContent;
+      if (!oa().callTool) throw new Error("callTool unavailable");
+      const resp = await oa().callTool(TOOL_NAME, args);
+      // Hosts return the tool result in different shapes; accept all of them.
+      let sc = resp?.structuredContent ?? resp?.result?.structuredContent ?? resp?.toolOutput
+        ?? resp?.result ?? resp;
+      if (typeof sc === "string") { try { sc = JSON.parse(sc); } catch (_) {} }
+      if (!sc || !Array.isArray(sc.items)) throw new Error("no data in response");
       ui.selected = null; ui.shown = PAGE; ui.minVal = null;
       loading = false;
-      if (sc) setData(sc); else render();
+      setData(sc);
       saveState();
-    } catch (e) { loading = false; render(); }
+    } catch (e) {
+      loading = false;
+      // Fallback: ask the agent to re-run the tool (still a real MCP round trip).
+      if (oa().sendFollowUpMessage) {
+        oa().sendFollowUpMessage({ prompt: `Reload the data with ${RELOAD.arg} = ${v}` });
+        ui.err = "Asked the agent to reload";
+      } else ui.err = "Reload failed: " + (e?.message || e);
+      render();
+    }
   });
   const min = app.querySelector("#min");
   if (min) min.oninput = () => { ui.minVal = Number(min.value); ui.shown = PAGE; app.querySelector("#minv").textContent = min.value; };
