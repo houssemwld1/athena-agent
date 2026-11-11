@@ -19,84 +19,143 @@ const APPS_URI = `ui://widget/explorer-app-${WIDGET_VERSION}.html`; // same widg
 // SWAP ZONE: change these for the subject you get
 // =====================================================================
 
-const APP_NAME = "earthquake-explorer";
-const TOOL_NAME = "search_earthquakes";
-const TOOL_TITLE = "Search earthquakes";
+const APP_NAME = "air-quality-dashboard";
+const TOOL_NAME = "compare_air_quality";
+const TOOL_TITLE = "Compare air quality across cities";
 const TOOL_DESCRIPTION =
-  "Use this when the user asks about recent earthquakes or seismic activity. " +
-  "Fetches live data from the USGS public earthquake catalog and shows an interactive explorer widget.";
+  "Use this when the user asks about air quality, air pollution, smog, AQI, PM2.5, PM10, NO2 or ozone " +
+  "in one or more cities, or wants to compare cities. Fetches live hourly data from the Open-Meteo Air Quality API " +
+  "(CAMS) and shows an interactive comparison dashboard widget with severity levels.";
+
+const POLLUTANTS = {
+  aqi: { name: "Overall AQI", aqi: "us_aqi", raw: null, unit: "" },
+  pm2_5: { name: "PM2.5", aqi: "us_aqi_pm2_5", raw: "pm2_5", unit: "µg/m³" },
+  pm10: { name: "PM10", aqi: "us_aqi_pm10", raw: "pm10", unit: "µg/m³" },
+  nitrogen_dioxide: { name: "NO2", aqi: "us_aqi_nitrogen_dioxide", raw: "nitrogen_dioxide", unit: "µg/m³" },
+  ozone: { name: "O3", aqi: "us_aqi_ozone", raw: "ozone", unit: "µg/m³" },
+};
+
+// Default comparison set: major cities across all continents.
+const CITIES = [
+  ["Delhi", "India", 28.61, 77.21], ["Beijing", "China", 39.9, 116.4], ["Lahore", "Pakistan", 31.55, 74.34],
+  ["Dhaka", "Bangladesh", 23.81, 90.41], ["Cairo", "Egypt", 30.04, 31.24], ["Jakarta", "Indonesia", -6.21, 106.85],
+  ["Mumbai", "India", 19.08, 72.88], ["Bangkok", "Thailand", 13.76, 100.5], ["Tokyo", "Japan", 35.68, 139.69],
+  ["Seoul", "South Korea", 37.57, 126.98], ["Shanghai", "China", 31.23, 121.47], ["Dubai", "UAE", 25.2, 55.27],
+  ["Istanbul", "Turkey", 41.01, 28.98], ["Moscow", "Russia", 55.76, 37.62], ["Paris", "France", 48.86, 2.35],
+  ["London", "United Kingdom", 51.51, -0.13], ["Berlin", "Germany", 52.52, 13.41], ["Madrid", "Spain", 40.42, -3.7],
+  ["Rome", "Italy", 41.9, 12.5], ["Tunis", "Tunisia", 36.81, 10.18], ["Lagos", "Nigeria", 6.52, 3.38],
+  ["Johannesburg", "South Africa", -26.2, 28.05], ["Nairobi", "Kenya", -1.29, 36.82], ["New York", "USA", 40.71, -74.01],
+  ["Los Angeles", "USA", 34.05, -118.24], ["Mexico City", "Mexico", 19.43, -99.13], ["Sao Paulo", "Brazil", -23.55, -46.63],
+  ["Buenos Aires", "Argentina", -34.6, -58.38], ["Sydney", "Australia", -33.87, 151.21], ["Toronto", "Canada", 43.65, -79.38],
+];
+
+function severity(aqi) {
+  if (aqi == null) return "n/a";
+  if (aqi <= 50) return "Good";
+  if (aqi <= 100) return "Moderate";
+  if (aqi <= 150) return "Unhealthy for sensitive groups";
+  if (aqi <= 200) return "Unhealthy";
+  if (aqi <= 300) return "Very unhealthy";
+  return "Hazardous";
+}
 
 // Inputs the model (and the widget) can pass. Keep defaults so every arg is optional.
 const INPUT_SCHEMA = {
-  days: z.number().int().min(1).max(30).default(7).describe("How many days back to search (1-30)"),
-  min_magnitude: z.number().min(0).max(10).default(4.5).describe("Minimum magnitude"),
-  limit: z.number().int().min(1).max(300).default(150).describe("Max number of results"),
+  pollutant: z.enum(["aqi", "pm2_5", "pm10", "nitrogen_dioxide", "ozone"]).default("aqi")
+    .describe("Pollutant to compare: aqi (overall US AQI), pm2_5, pm10, nitrogen_dioxide or ozone"),
+  days: z.number().int().min(1).max(7).default(1)
+    .describe("Time window: average over the last N days (1-7)"),
+  cities: z.string().default("")
+    .describe("Optional comma separated city names to compare, e.g. 'Paris, Delhi, Tunis'. Empty = 30 major world cities"),
 };
 
-// Fetch real data and return it in the generic shape the widget understands:
-// {
-//   title, subtitle, source, sourceUrl,
-//   query: {...the args used...},
-//   valueName: "Magnitude",           // what "value" means
-//   items: [{ id, label, value, time, lat, lon, url, details: { key: value } }],
-//   stats: [{ label, value }]
-// }
+async function geocode(name) {
+  const known = CITIES.find((c) => c[0].toLowerCase() === name.toLowerCase());
+  if (known) return known;
+  const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=1`);
+  const j = r.ok ? await r.json() : {};
+  const g = j.results?.[0];
+  return g ? [g.name, g.country ?? "", g.latitude, g.longitude] : null;
+}
+
 async function fetchData(args) {
-  const days = args.days ?? 7;
-  const minMag = args.min_magnitude ?? 4.5;
-  const limit = args.limit ?? 150;
+  const pollutant = POLLUTANTS[args.pollutant] ? args.pollutant : "aqi";
+  const days = Math.min(7, Math.max(1, Number(args.days) || 1));
+  const citiesArg = String(args.cities ?? "").trim();
+  const p = POLLUTANTS[pollutant];
 
-  const start = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  let cities = CITIES;
+  if (citiesArg) {
+    const names = citiesArg.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 30);
+    cities = (await Promise.all(names.map(geocode))).filter(Boolean);
+    if (!cities.length) throw new Error(`No matching cities for "${citiesArg}"`);
+  }
+
+  const hourly = [p.aqi, p.raw].filter(Boolean).join(",");
   const url =
-    "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson" +
-    `&starttime=${start}&minmagnitude=${minMag}&orderby=time&limit=${limit}`;
+    "https://air-quality-api.open-meteo.com/v1/air-quality?timezone=GMT&forecast_days=1" +
+    `&past_days=${days}&hourly=${hourly}` +
+    `&latitude=${cities.map((c) => c[2]).join(",")}&longitude=${cities.map((c) => c[3]).join(",")}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Open-Meteo returned ${res.status}`);
+  let json = await res.json();
+  if (!Array.isArray(json)) json = [json];
 
-  const res = await fetch(url, { headers: { "User-Agent": "athena-starter" } });
-  if (!res.ok) throw new Error(`USGS returned ${res.status}`);
-  const json = await res.json();
+  const now = Date.now(), from = now - days * 86400000;
+  const items = json.map((loc, i) => {
+    const [name, country, lat, lon] = cities[i];
+    const t = loc.hourly.time.map((s) => Date.parse(s + "Z"));
+    const idx = t.map((ts, k) => k).filter((k) => t[k] <= now && t[k] > from && loc.hourly[p.aqi][k] != null);
+    const aqis = idx.map((k) => loc.hourly[p.aqi][k]);
+    if (!aqis.length) return null;
+    const avg = Math.round(aqis.reduce((a, b) => a + b, 0) / aqis.length);
+    const peakK = idx[aqis.indexOf(Math.max(...aqis))];
+    const lastK = idx[idx.length - 1];
+    const raws = p.raw ? idx.map((k) => loc.hourly[p.raw][k]).filter((v) => v != null) : [];
+    const details = {
+      Severity: severity(avg),
+      "Current AQI": loc.hourly[p.aqi][lastK],
+      "Peak AQI": loc.hourly[p.aqi][peakK],
+      "Peak time (UTC)": new Date(t[peakK]).toISOString().slice(0, 16).replace("T", " "),
+    };
+    if (raws.length) details[`Avg ${p.name} (${p.unit})`] = (raws.reduce((a, b) => a + b, 0) / raws.length).toFixed(1);
+    details.Country = country;
+    return {
+      id: `${name}-${lat}`,
+      label: country ? `${name}, ${country}` : name,
+      value: avg,
+      time: new Date(t[peakK]).toISOString(),
+      lat, lon,
+      url: `https://open-meteo.com/en/docs/air-quality-api?latitude=${lat}&longitude=${lon}`,
+      details,
+    };
+  }).filter(Boolean);
 
-  const items = json.features.map((f) => ({
-    id: f.id,
-    label: f.properties.place || "Unknown location",
-    value: f.properties.mag,
-    time: new Date(f.properties.time).toISOString(),
-    lat: f.geometry.coordinates[1],
-    lon: f.geometry.coordinates[0],
-    url: f.properties.url,
-    details: {
-      "Depth (km)": f.geometry.coordinates[2]?.toFixed(1),
-      "Magnitude type": f.properties.magType,
-      "Felt reports": f.properties.felt ?? 0,
-      "Tsunami flag": f.properties.tsunami ? "Yes" : "No",
-      Significance: f.properties.sig,
-    },
-  }));
-
-  const values = items.map((i) => i.value).filter((v) => typeof v === "number");
-  const max = values.length ? Math.max(...values) : null;
-
+  const sorted = [...items].sort((a, b) => b.value - a.value);
+  const worst = sorted[0], best = sorted[sorted.length - 1];
   return {
-    title: "Earthquake explorer",
-    subtitle: `Last ${days} day(s), magnitude ${minMag}+`,
-    source: "USGS Earthquake Hazards Program",
-    sourceUrl: "https://earthquake.usgs.gov",
-    query: { days, min_magnitude: minMag, limit },
-    valueName: "Magnitude",
+    title: `Air quality: ${p.name}`,
+    subtitle: `US AQI for ${p.name}, average over the last ${days === 1 ? "24 hours" : days + " days"}, ${items.length} cities`,
+    source: "Open-Meteo Air Quality API (Copernicus CAMS)",
+    sourceUrl: "https://open-meteo.com/en/docs/air-quality-api",
+    query: { pollutant, days, cities: citiesArg },
+    valueName: `${p.name} AQI`,
     items,
     stats: [
-      { label: "Events", value: items.length },
-      { label: "Strongest", value: max ?? "n/a" },
-      { label: "Window", value: `${days}d` },
+      { label: "Worst", value: worst ? `${worst.label.split(",")[0]} ${worst.value}` : "n/a" },
+      { label: "Cleanest", value: best ? `${best.label.split(",")[0]} ${best.value}` : "n/a" },
+      { label: "Unhealthy (AQI > 100)", value: items.filter((i) => i.value > 100).length },
     ],
   };
 }
 
 // Short text the model reads to write its answer.
 function summarize(data) {
-  const top = [...data.items].sort((a, b) => (b.value ?? 0) - (a.value ?? 0)).slice(0, 3);
+  const s = [...data.items].sort((a, b) => b.value - a.value);
+  const fmt = (t) => `${t.label} AQI ${t.value} (${t.details.Severity})`;
   return (
-    `${data.items.length} results from ${data.source} (${data.subtitle}). ` +
-    (top.length ? "Top: " + top.map((t) => `${t.label} (${t.value})`).join("; ") + "." : "")
+    `${data.title}. ${data.subtitle}. Source: ${data.source}. ` +
+    (s.length ? `Worst: ${s.slice(0, 3).map(fmt).join("; ")}. Cleanest: ${fmt(s[s.length - 1])}.` : "No data.")
   );
 }
 

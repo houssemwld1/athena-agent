@@ -1,10 +1,11 @@
-# Athena Agent: live data explorer
+# Athena Agent: air quality comparison dashboard
 
 An Athena AI agent backed by an MCP server. It fetches real data from a public API and renders it in an interactive widget embedded in the Athena chat.
 
 - Protocol: MCP over Streamable HTTP, endpoint `/mcp`
 - Widget: `text/html+skybridge` resource driven by `window.openai`
-- Data: USGS Earthquake catalog (public, no API key)
+- Data: Open-Meteo Air Quality API (Copernicus CAMS, public, no API key), city lookup via Open-Meteo Geocoding
+- Tool: `compare_air_quality(pollutant, days, cities)`, value = US AQI per city for the chosen pollutant
 
 ## Files
 
@@ -36,9 +37,9 @@ npx @modelcontextprotocol/inspector@latest --server-url http://localhost:8787/mc
 
 | Control | Behaviour |
 | --- | --- |
-| 24h / 7d / 30d | Calls the MCP tool again via `window.openai.callTool` (real server round trip, fresh data) |
-| Value slider | Filters results instantly in the widget |
-| Sort | Most recent / highest value / name |
+| AQI / PM2.5 / PM10 / NO2 / O3 | Switches pollutant: calls the MCP tool again via `window.openai.callTool` (real server round trip, fresh data) |
+| Severity slider | Shows only cities at or above an AQI level (red = 101+, unhealthy for sensitive groups) |
+| Sort | Worst AQI first / peak time / name |
 | Name filter | Text search over results |
 | Click a row or map point | Expands details and highlights it on the map |
 

@@ -59,12 +59,13 @@
 // =====================================================================
 // SWAP ZONE: adapt to the subject
 // =====================================================================
-const TOOL_NAME = "search_earthquakes";          // must match TOOL_NAME in server.js
+const TOOL_NAME = "compare_air_quality";          // must match TOOL_NAME in server.js
 const RELOAD = {                                  // buttons that re-call the MCP tool (real round trip)
-  arg: "days",
-  options: [ { v: 1, l: "24h" }, { v: 7, l: "7d" }, { v: 30, l: "30d" } ],
+  arg: "pollutant",
+  options: [ { v: "aqi", l: "AQI" }, { v: "pm2_5", l: "PM2.5" }, { v: "pm10", l: "PM10" },
+             { v: "nitrogen_dioxide", l: "NO2" }, { v: "ozone", l: "O3" } ],
 };
-const HOT_THRESHOLD = 6;                          // values at or above this get a red badge
+const HOT_THRESHOLD = 101;                          // values at or above this get a red badge
 const PAGE = 8;                                   // rows shown before "Show more"
 // =====================================================================
 
@@ -233,7 +234,7 @@ function render() {
 function bind() {
   // Real MCP round trip: re-call the tool from inside the widget
   app.querySelectorAll("#reload button").forEach(b => b.onclick = async () => {
-    const v = Number(b.dataset.v);
+    const v = isNaN(Number(b.dataset.v)) ? b.dataset.v : Number(b.dataset.v);
     const args = { ...(data.query || {}), [RELOAD.arg]: v };
     loading = true; ui.err = ""; ui.pendingV = v; saveState(); render();
     try {
