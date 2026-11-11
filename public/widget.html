@@ -158,8 +158,9 @@ function vizSVG(items) {
     for (let lon = -180; lon <= 180; lon += 30) g += `<line x1="${x(lon)}" y1="0" x2="${x(lon)}" y2="${H}" stroke="var(--line)" />`;
     for (let lat = -90; lat <= 90; lat += 30) g += `<line x1="0" y1="${y(lat)}" x2="${W}" y2="${y(lat)}" stroke="var(--line)" />`;
     g += `<line x1="0" y1="${y(0)}" x2="${W}" y2="${y(0)}" stroke="var(--muted)" stroke-dasharray="4 4" opacity=".5" />`;
+    const maxV = Math.max(1, ...items.map(i => i.value ?? 0));
     const dots = items.map(i => {
-      const r = Math.max(2.5, ((i.value ?? 1) ** 1.6) / 2);
+      const r = 3 + 9 * Math.max(0, i.value ?? 0) / maxV; // scale to the largest value (any unit)
       const sel = ui.selected === i.id;
       const op = ui.selected && !sel ? 0.25 : 0.8;
       const col = (i.value ?? 0) >= HOT_THRESHOLD ? "var(--hot)" : "var(--accent)";
