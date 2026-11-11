@@ -71,6 +71,42 @@ const PAGE = 8;                                   // rows shown before "Show mor
 const app = document.getElementById("app");
 const oa = () => window.openai || {};
 
+// MCP Apps bridge: if the host does not inject window.openai (skybridge),
+// talk to it over postMessage JSON-RPC and expose the same window.openai API.
+if (!window.openai && window.parent !== window) {
+  let seq = 0; const pending = {};
+  const post = m => window.parent.postMessage({ jsonrpc: "2.0", ...m }, "*");
+  const rpc = (method, params) => new Promise((res, rej) => {
+    const id = ++seq; pending[id] = { res, rej }; post({ id, method, params });
+    setTimeout(() => { if (pending[id]) { delete pending[id]; rej(new Error("timeout")); } }, 30000);
+  });
+  const push = sc => {
+    if (!sc) return;
+    window.openai.toolOutput = sc;
+    window.dispatchEvent(new CustomEvent("openai:set_globals", { detail: { globals: { toolOutput: sc } } }));
+  };
+  window.openai = {
+    toolOutput: null, widgetState: null,
+    setWidgetState(s) { this.widgetState = s; },
+    callTool: (name, args) => rpc("tools/call", { name, arguments: args }),
+    openExternal: ({ href }) => rpc("ui/open-link", { url: href }).catch(() => window.open(href, "_blank")),
+  };
+  window.addEventListener("message", e => {
+    const m = e.data;
+    if (!m || m.jsonrpc !== "2.0") return;
+    if (m.id != null && pending[m.id] && !m.method) {
+      const p = pending[m.id]; delete pending[m.id];
+      return m.error ? p.rej(m.error) : p.res(m.result);
+    }
+    if (m.method === "ui/notifications/tool-result") push(m.params?.structuredContent);
+  });
+  rpc("ui/initialize", { appInfo: { name: TOOL_NAME, version: "1.0.0" }, appCapabilities: {}, protocolVersion: "2025-06-18" })
+    .then(r => { if (r?.hostContext?.theme) window.openai.theme = r.hostContext.theme; post({ method: "ui/notifications/initialized", params: {} }); })
+    .catch(() => {});
+  new ResizeObserver(() => post({ method: "ui/notifications/size-changed",
+    params: { height: document.documentElement.scrollHeight } })).observe(document.documentElement);
+}
+
 let data = null;
 let loading = false;
 let ui = Object.assign(

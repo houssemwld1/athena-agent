@@ -5,10 +5,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
+import { webcrypto } from "node:crypto";
+globalThis.crypto ??= webcrypto; // Node 18 has no global crypto; the MCP SDK needs it
 import { z } from "zod";
 
 const WIDGET_HTML = readFileSync(new URL("./public/widget.html", import.meta.url), "utf8");
 const WIDGET_URI = "ui://widget/explorer.html";
+const APPS_URI = "ui://widget/explorer-app.html"; // same widget, MCP Apps standard mimeType
 
 // =====================================================================
 // SWAP ZONE: change these for the subject you get
@@ -102,7 +105,7 @@ function summarize(data) {
 function createAppServer() {
   const server = new McpServer({ name: APP_NAME, version: "1.0.0" });
 
-  server.registerResource("explorer-widget", WIDGET_URI, {}, async () => ({
+  server.registerResource("explorer-widget", WIDGET_URI, { mimeType: "text/html+skybridge" }, async () => ({
     contents: [
       {
         uri: WIDGET_URI,
@@ -114,6 +117,10 @@ function createAppServer() {
         },
       },
     ],
+  }));
+
+  server.registerResource("explorer-widget-app", APPS_URI, { mimeType: "text/html;profile=mcp-app" }, async () => ({
+    contents: [{ uri: APPS_URI, mimeType: "text/html;profile=mcp-app", text: WIDGET_HTML }],
   }));
 
   server.registerTool(
@@ -128,6 +135,8 @@ function createAppServer() {
         "openai/widgetAccessible": true,
         "openai/toolInvocation/invoking": "Fetching live data",
         "openai/toolInvocation/invoked": "Data loaded",
+        ui: { resourceUri: APPS_URI },
+        "ui/resourceUri": APPS_URI,
       },
     },
     async (args) => {
@@ -224,8 +233,17 @@ const httpServer = createServer(async (req, res) => {
       server.close();
     });
     try {
+      let body;
+      if (req.method === "POST") {
+        const chunks = [];
+        for await (const c of req) chunks.push(c);
+        try { body = JSON.parse(Buffer.concat(chunks).toString() || "null"); } catch (_) { body = undefined; }
+        const msgs = Array.isArray(body) ? body : [body];
+        console.log("MCP", msgs.map(m => m?.method + (m?.params?.name ? `(${m.params.name})` : m?.params?.uri ? `(${m.params.uri})` : "")).join(", "),
+          "| ua:", req.headers["user-agent"] ?? "-");
+      }
       await server.connect(transport);
-      await transport.handleRequest(req, res);
+      await transport.handleRequest(req, res, body);
     } catch (err) {
       console.error("MCP error:", err);
       if (!res.headersSent) res.writeHead(500).end("Internal server error");
