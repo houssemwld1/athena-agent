@@ -30,6 +30,7 @@ Deliverables: .mp4/.MOV video, MCP URL (Render, ends in `/mcp`), Athena agent li
 - Tool `_meta` must keep `openai/outputTemplate` pointing to the widget URI and `openai/widgetAccessible: true` (needed for `callTool` from the widget).
 - Tool result must ALSO carry `_meta: { "openai/outputTemplate": WIDGET_URI }`. Athena only renders the widget when the result itself has it (verified 2026-11-11). Never remove it.
 - Tool result: `content` (short text summary for the model) + `structuredContent` (the data the widget renders). Keep `structuredContent` reasonably small (cap items, around 150 to 300).
+- Athena re-renders the widget iframe after every widget `callTool`. The widget keeps reloaded data in `widgetState` (`ui.snap`) so the reload survives. Never remove that (verified 2026-11-11).
 - The widget iframe has a strict CSP: it must NEVER call external APIs or load external scripts, fonts or images. All data fetching happens in `server.js`. All CSS/JS stays inline.
 - Widget reads data from `window.openai.toolOutput`, listens for `openai:set_globals`, re-fetches via `window.openai.callTool(TOOL_NAME, args)`, persists UI state with `window.openai.setWidgetState`.
 
