@@ -26,7 +26,7 @@ Deliverables: .mp4/.MOV video, MCP URL (Render, ends in `/mcp`), Athena agent li
 ## Architecture (do not break these contracts)
 
 - MCP over Streamable HTTP, stateless, at `/mcp`. Import path is `@modelcontextprotocol/sdk/server/streamableHttp.js` (camelCase; the Athena docs are wrong about this).
-- Widget resource URI `ui://widget/explorer.html`, mimeType exactly `text/html+skybridge`. Any other mimeType means `window.openai` is undefined.
+- Widget resource URI `ui://widget/explorer-<hash>.html` (hash of widget.html, computed in server.js, because Athena caches widget HTML by URI), mimeType exactly `text/html+skybridge`. Any other mimeType means `window.openai` is undefined.
 - Tool `_meta` must keep `openai/outputTemplate` pointing to the widget URI and `openai/widgetAccessible: true` (needed for `callTool` from the widget).
 - Tool result must ALSO carry `_meta: { "openai/outputTemplate": WIDGET_URI }`. Athena only renders the widget when the result itself has it (verified 2026-11-11). Never remove it.
 - Tool result: `content` (short text summary for the model) + `structuredContent` (the data the widget renders). Keep `structuredContent` reasonably small (cap items, around 150 to 300).

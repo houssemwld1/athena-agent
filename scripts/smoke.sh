@@ -35,7 +35,8 @@ TOOL=$(node -e 'try{const r=JSON.parse(process.argv[1]);process.stdout.write(r.r
 [[ "$T" == *'openai/outputTemplate'* ]] && ok "outputTemplate set" || bad "outputTemplate missing"
 [[ "$T" == *'"openai/widgetAccessible":true'* ]] && ok "widgetAccessible true" || bad "widgetAccessible missing"
 
-R=$(rpc '{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"ui://widget/explorer.html"}}')
+WURI=$(node -e 'try{const r=JSON.parse(process.argv[1]);process.stdout.write(r.result.tools[0]._meta["openai/outputTemplate"])}catch(e){}' "$T")
+R=$(rpc "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"resources/read\",\"params\":{\"uri\":\"${WURI:-ui://widget/explorer.html}\"}}")
 [[ "$R" == *'"mimeType":"text/html+skybridge"'* ]] && ok "widget mimeType text/html+skybridge" || bad "widget resource" "${R:0:300}"
 
 WTOOL=$(grep -oE 'const TOOL_NAME = "[^"]+"' public/widget.html 2>/dev/null | cut -d'"' -f2)

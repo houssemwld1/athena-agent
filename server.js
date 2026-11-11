@@ -5,13 +5,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
-import { webcrypto } from "node:crypto";
+import { webcrypto, createHash } from "node:crypto";
 globalThis.crypto ??= webcrypto; // Node 18 has no global crypto; the MCP SDK needs it
 import { z } from "zod";
 
 const WIDGET_HTML = readFileSync(new URL("./public/widget.html", import.meta.url), "utf8");
-const WIDGET_URI = "ui://widget/explorer.html";
-const APPS_URI = "ui://widget/explorer-app.html"; // same widget, MCP Apps standard mimeType
+// Content hash in the URI: Athena caches widget HTML by URI, so every widget change gets a fresh URI.
+const WIDGET_VERSION = createHash("sha1").update(WIDGET_HTML).digest("hex").slice(0, 8);
+const WIDGET_URI = `ui://widget/explorer-${WIDGET_VERSION}.html`;
+const APPS_URI = `ui://widget/explorer-app-${WIDGET_VERSION}.html`; // same widget, MCP Apps standard mimeType
 
 // =====================================================================
 // SWAP ZONE: change these for the subject you get
