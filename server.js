@@ -145,6 +145,7 @@ function createAppServer() {
         return {
           content: [{ type: "text", text: summarize(data) }],
           structuredContent: data,
+          _meta: { "openai/outputTemplate": WIDGET_URI, ui: { resourceUri: APPS_URI } },
         };
       } catch (err) {
         return {
