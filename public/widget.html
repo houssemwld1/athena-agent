@@ -235,29 +235,32 @@ function bind() {
   app.querySelectorAll("#reload button").forEach(b => b.onclick = async () => {
     const v = Number(b.dataset.v);
     const args = { ...(data.query || {}), [RELOAD.arg]: v };
-    loading = true; ui.err = ""; render();
+    loading = true; ui.err = ""; ui.pendingV = v; saveState(); render();
     try {
       if (!oa().callTool) throw new Error("callTool unavailable");
       const resp = await oa().callTool(TOOL_NAME, args);
+      ui.pendingV = null;
+      const shape = resp && typeof resp === "object" ? Object.keys(resp).join(",") : typeof resp;
       // Hosts return the tool result in different shapes; accept all of them.
       let sc = resp?.structuredContent ?? resp?.result?.structuredContent ?? resp?.toolOutput
         ?? resp?.result ?? resp;
       if (typeof sc === "string") { try { sc = JSON.parse(sc); } catch (_) {} }
-      if (!sc || !Array.isArray(sc.items)) throw new Error("no data in response");
+      if (!sc || !Array.isArray(sc.items)) throw new Error("no data in response [" + shape + "]");
       // Some hosts drop the arguments: detect that the server did not use the new value.
       if (sc.query && sc.query[RELOAD.arg] !== undefined && sc.query[RELOAD.arg] !== v) throw new Error("host ignored arguments");
       ui.selected = null; ui.shown = PAGE; ui.minVal = null;
       loading = false;
+      ui.snap = sc; // persisted: survives the host re-rendering the iframe
       setData(sc);
       saveState();
     } catch (e) {
-      loading = false;
+      loading = false; ui.pendingV = null;
       // Fallback: ask the agent to re-run the tool (still a real MCP round trip).
       if (oa().sendFollowUpMessage) {
         oa().sendFollowUpMessage({ prompt: `Reload the data with ${RELOAD.arg} = ${v}` });
         ui.err = "Asked the agent to reload";
       } else ui.err = "Reload failed: " + (e?.message || e);
-      render();
+      saveState(); render();
     }
   });
   const min = app.querySelector("#min");
@@ -284,11 +287,17 @@ function bind() {
 // Initial data injected by Athena, plus updates pushed later
 window.addEventListener("openai:set_globals", (e) => {
   const g = e.detail?.globals || {};
-  if (g.toolOutput) setData(g.toolOutput);
+  if (g.toolOutput && !ui.snap) setData(g.toolOutput);
   else if (g.theme) render();
 }, { passive: true });
 
-if (oa().toolOutput) setData(oa().toolOutput);
+// If the host re-rendered the iframe in the middle of a reload, say so (debug aid).
+if (ui.pendingV != null) {
+  ui.err = `Widget restarted during reload (host data ${RELOAD.arg}=${oa().toolOutput?.query?.[RELOAD.arg]})`;
+  ui.pendingV = null; saveState();
+}
+if (ui.snap) setData(ui.snap);
+else if (oa().toolOutput) setData(oa().toolOutput);
 else render();
 </script>
 </body>
