@@ -242,7 +242,7 @@ const httpServer = createServer(async (req, res) => {
         for await (const c of req) chunks.push(c);
         try { body = JSON.parse(Buffer.concat(chunks).toString() || "null"); } catch (_) { body = undefined; }
         const msgs = Array.isArray(body) ? body : [body];
-        console.log("MCP", msgs.map(m => m?.method + (m?.params?.name ? `(${m.params.name})` : m?.params?.uri ? `(${m.params.uri})` : "")).join(", "),
+        console.log("MCP", msgs.map(m => m?.method + (m?.params?.name ? `(${m.params.name} ${JSON.stringify(m.params.arguments ?? null)})` : m?.params?.uri ? `(${m.params.uri})` : "")).join(", "),
           "| ua:", req.headers["user-agent"] ?? "-");
       }
       await server.connect(transport);

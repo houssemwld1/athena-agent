@@ -244,6 +244,8 @@ function bind() {
         ?? resp?.result ?? resp;
       if (typeof sc === "string") { try { sc = JSON.parse(sc); } catch (_) {} }
       if (!sc || !Array.isArray(sc.items)) throw new Error("no data in response");
+      // Some hosts drop the arguments: detect that the server did not use the new value.
+      if (sc.query && sc.query[RELOAD.arg] !== undefined && sc.query[RELOAD.arg] !== v) throw new Error("host ignored arguments");
       ui.selected = null; ui.shown = PAGE; ui.minVal = null;
       loading = false;
       setData(sc);
